@@ -1,0 +1,14 @@
+Third-party software in this folder
+===================================
+
+libv86.js, v86.wasm
+  v86 0.5.462, https://github.com/copy/v86, BSD-2-Clause (see LICENSE-v86.txt).
+
+images.js (the `bios` and `vga_bios` entries)
+  SeaBIOS and the SeaBIOS VGA BIOS, as built by the v86 project,
+  https://github.com/copy/v86/tree/b8a39b11dd2076870699e6cac053556271b9bfab/bios
+  Licensed under the GNU LGPL v3. Source: https://www.seabios.org/
+  (the exact build configuration is in the v86 repository linked above).
+
+Everything else (the `multiboot` entry in images.js and the page) is Rust Runner OS,
+MIT OR Apache-2.0: https://github.com/ali3b/rust-runner-os

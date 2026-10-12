@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>Rust Runner OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Chakra+Petch:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: a PC on the desk. The screen (v86's VGA output) on the left, the
+     machine's COM1 serial console on the right; they stack on narrow screens. */
+  :root {
+    --night: #0d0820;
+    --bezel: #1b1236;
+    --bezel-edge: #3a2a6b;
+    --neon: #ff4fd8;
+    --cyan: #46f0ff;
+    --gold: #ffcf33;
+    --phosphor: #7dff9e;     /* serial console text */
+    --tube: #050a07;         /* serial console glass */
+    --ink: #efe9ff;
+    --ink-dim: #a99bd6;
+    --display: "Silkscreen", "Courier New", monospace;
+    --body: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  /* Overlays below set `display`, so `hidden` needs to win explicitly. */
+  [hidden] { display: none !important; }
+  body {
+    background: radial-gradient(120% 80% at 50% 0%, #22144a 0%, var(--night) 60%) fixed, var(--night);
+    color: var(--ink);
+    font-family: var(--body);
+    padding-inline: 16px;
+    padding-block: 20px 28px;
+    box-sizing: border-box;
+  }
+  .desk {
+    max-width: 1240px;
+    margin-inline: auto;
+    display: grid;
+    gap: 14px;
+  }
+  .marquee {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px 16px;
+  }
+  .marquee h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(22px, 4vw, 34px);
+    letter-spacing: 0.04em;
+    text-shadow: 3px 3px 0 #1a0a33, 0 0 18px rgba(255, 79, 216, 0.55);
+  }
+  .marquee p { margin: 0; color: var(--ink-dim); font-size: 14px; max-width: 60ch; }
+  .machine {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 1.25fr);
+    gap: 14px;
+    align-items: stretch;
+  }
+  @media (max-width: 860px) {
+    .machine { grid-template-columns: minmax(0, 1fr); }
+  }
+  .bezel {
+    background: linear-gradient(180deg, var(--bezel-edge), var(--bezel) 18%);
+    border-radius: 14px;
+    padding: clamp(8px, 1.6vw, 16px);
+    box-shadow: 0 0 0 1px #000, 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 40px rgba(255, 79, 216, 0.12);
+    min-width: 0;
+  }
+  .screen {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    width: min(100%, calc((100vh - 220px) * 4 / 3));
+    min-width: min(100%, 300px);
+    max-width: 100%;
+    margin-inline: auto;
+    background: #000;
+    border-radius: 6px;
+    overflow: hidden;
+    container-type: inline-size;
+  }
+  /* v86 draws text mode (the BIOS) into the div and graphics into the canvas. */
+  #vga-text {
+    position: absolute;
+    inset: 4% 3%;
+    white-space: pre;
+    font-family: var(--mono);
+    font-size: 2.15cqw;
+    line-height: 1.32;
+    color: #c8c8c8;
+    overflow: hidden;
+  }
+  #vga-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  .scanlines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.28) 2px 3px);
+    box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55);
+  }
+  .power {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    text-align: center;
+    background: #07040f;
+    border: 0;
+    width: 100%;
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+  }
+  .power .switch {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 3px solid var(--neon);
+    display: grid;
+    place-items: center;
+    box-shadow: 0 0 22px rgba(255, 79, 216, 0.5);
+  }
+  .power .switch svg { width: 30px; height: 30px; }
+  .power strong { font-family: var(--display); font-size: clamp(15px, 2.6vw, 22px); color: var(--gold); }
+  .power span { color: var(--ink-dim); font-size: 13px; max-width: 42ch; }
+  .power:focus-visible .switch { outline: 3px solid var(--cyan); outline-offset: 4px; }
+  .console {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    background: var(--bezel);
+    border: 1px solid var(--bezel-edge);
+    border-radius: 14px;
+    overflow: hidden;
+    min-width: 0;
+    min-height: 220px;
+  }
+  .console header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    font-family: var(--display);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    border-bottom: 1px solid var(--bezel-edge);
+  }
+  .led { display: inline-flex; gap: 6px; align-items: center; }
+  .led::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3b2f5a;
+  }
+  .led.on::before { background: var(--phosphor); box-shadow: 0 0 8px var(--phosphor); }
+  #serial {
+    margin: 0;
+    padding: 12px 14px;
+    background: var(--tube);
+    color: var(--phosphor);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 62vh;
+    text-shadow: 0 0 6px rgba(125, 255, 158, 0.35);
+  }
+  #serial .hl { color: var(--gold); }
+  #serial .dim { color: #4f9b66; }
+  .panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--ink-dim);
+  }
+  .panel div { display: flex; gap: 8px; align-items: center; }
+  kbd {
+    font-family: var(--display);
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--bezel);
+    border: 1px solid var(--bezel-edge);
+    border-bottom-width: 3px;
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+  .touch { display: none; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .touch button {
+    font-family: var(--display);
+    font-size: 15px;
+    color: var(--ink);
+    background: var(--bezel);
+    border: 2px solid var(--bezel-edge);
+    border-radius: 12px;
+    padding: 16px 8px;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .touch button.held { border-color: var(--neon); background: #2b1a52; }
+  .touch button:focus-visible { outline: 3px solid var(--cyan); }
+  @media (pointer: coarse) {
+    .touch { display: grid; }
+    .panel { display: none; }
+  }
+  .note { margin: 0; text-align: center; font-size: 13px; color: var(--ink-dim); }
+  .note a { color: var(--cyan); }
+  .note b { color: var(--ink); font-weight: 600; }
+  @media (prefers-reduced-motion: reduce) {
+    .power .switch { box-shadow: none; }
+  }
+</style>
+
+<main class="desk">
+  <header class="marquee">
+    <h1>RUST RUNNER OS</h1>
+    <p>A bare-metal Rust kernel that boots straight into a rhythm runner. This is a whole emulated PC: the BIOS boots the 32-bit kernel, which drives the VGA card, keyboard and Sound Blaster itself.</p>
+  </header>
+
+  <div class="machine">
+    <div class="bezel">
+      <div class="screen" id="screen">
+        <div id="vga-text"></div>
+        <canvas id="vga-canvas"></canvas>
+        <div class="scanlines" id="scanlines"></div>
+        <button class="power" id="power" type="button">
+          <div class="switch" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#ff4fd8" stroke-width="2.5" stroke-linecap="round"><path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>
+          </div>
+          <strong>POWER ON</strong>
+          <span id="power-hint">Boots an emulated x86 PC in your browser (v86). Sound on.</span>
+        </button>
+      </div>
+    </div>
+
+    <section class="console" aria-label="Serial console">
+      <header>
+        <span>COM1 &middot; 115200 8N1</span>
+        <span class="led" id="led">RUN</span>
+      </header>
+      <pre id="serial" aria-live="off"><span class="dim">Waiting for power...</span>
+</pre>
+    </section>
+  </div>
+
+  <div class="panel" aria-label="Controls">
+    <div><kbd>SPACE</kbd> jump</div>
+    <div><kbd>&darr;</kbd> slide</div>
+    <div><kbd>&rarr;</kbd> kick</div>
+    <div><kbd>R</kbd> retry</div>
+    <div><kbd>C</kbd> scanlines</div>
+    <div><kbd>ESC</kbd> title</div>
+  </div>
+
+  <div class="touch" aria-label="Touch controls">
+    <button type="button" id="btn-slide" data-scan="slide">SLIDE</button>
+    <button type="button" id="btn-jump" data-scan="jump">JUMP</button>
+    <button type="button" id="btn-kick" data-scan="kick">KICK</button>
+  </div>
+
+  <p class="note">Emulator: <a href="https://github.com/copy/v86" target="_blank" rel="noopener">v86</a> (BSD-2-Clause) with <a href="https://www.seabios.org/" target="_blank" rel="noopener">SeaBIOS</a> (LGPLv3). The game kernel is <b>~170 KiB</b> of Rust with no OS underneath.</p>
+</main>
+
+<script src="images.js"></script>
+<script src="libv86.js"></script>
+<script>
+(() => {
+  const SCAN = {
+    jump: [0x39],          // Space
+    slide: [0xe0, 0x50],   // Down
+    kick: [0xe0, 0x4d],    // Right
+  };
+  const serialEl = document.getElementById("serial");
+  const powerBtn = document.getElementById("power");
+  const scanlines = document.getElementById("scanlines");
+  const led = document.getElementById("led");
+  let emulator = null;
+  let line = "";
+  const MAX_LINES = 400;
+
+  function appendLine(text) {
+    const span = document.createElement("span");
+    if (/^(state|zone|level|powerup|combo|shield):/.test(text)) span.className = "hl";
+    if (/^fps:/.test(text)) span.className = "dim";
+    span.textContent = text + "\n";
+    const stick = serialEl.scrollTop + serialEl.clientHeight >= serialEl.scrollHeight - 8;
+    serialEl.appendChild(span);
+    while (serialEl.childNodes.length > MAX_LINES) serialEl.removeChild(serialEl.firstChild);
+    if (stick) serialEl.scrollTop = serialEl.scrollHeight;
+    // The kernel announces the CRT toggle (C key) on the serial line.
+    const crt = /^crt: (\d)/.exec(text);
+    if (crt) scanlines.hidden = crt[1] === "0";
+  }
+
+  function onSerialByte(byte) {
+    const c = String.fromCharCode(byte);
+    if (c === "\n") {
+      appendLine(line.replace(/\r$/, ""));
+      line = "";
+    } else {
+      line += c;
+    }
+  }
+
+  function decode(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { buffer: bytes.buffer };
+  }
+
+  function powerOn() {
+    if (emulator) return;
+    const images = window.RUNNER_IMAGES;
+    if (typeof V86 === "undefined" || typeof WebAssembly === "undefined" || !images) {
+      document.getElementById("power-hint").textContent = "This browser can't run the emulator (WebAssembly is unavailable).";
+      return;
+    }
+    powerBtn.hidden = true;
+    serialEl.textContent = "";
+    emulator = new V86({
+      wasm_path: "v86.wasm",
+      bios: decode(images.bios),
+      vga_bios: decode(images.vga_bios),
+      multiboot: decode(images.multiboot),
+      memory_size: 64 * 1024 * 1024,
+      vga_memory_size: 8 * 1024 * 1024,
+      screen_container: document.getElementById("screen"),
+      autostart: true,
+    });
+    emulator.add_listener("serial0-output-byte", onSerialByte);
+    emulator.add_listener("emulator-started", () => led.classList.add("on"));
+    emulator.add_listener("emulator-stopped", () => led.classList.remove("on"));
+  }
+
+  powerBtn.addEventListener("click", powerOn);
+  // Keep Space and the arrows from scrolling the page while playing.
+  window.addEventListener("keydown", (e) => {
+    if (!emulator && (e.code === "Space" || e.code === "Enter")) {
+      e.preventDefault();
+      powerOn();
+      return;
+    }
+    if (emulator && ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
+  });
+
+  for (const btn of document.querySelectorAll(".touch button")) {
+    const codes = SCAN[btn.dataset.scan];
+    const press = (down) => (e) => {
+      e.preventDefault();
+      if (!emulator) {
+        powerOn();
+        return;
+      }
+      btn.classList.toggle("held", down);
+      const seq = codes.map((c, i) => (i === codes.length - 1 && !down ? c | 0x80 : c));
+      emulator.keyboard_send_scancodes(seq);
+    };
+    btn.addEventListener("pointerdown", press(true));
+    btn.addEventListener("pointerup", press(false));
+    btn.addEventListener("pointercancel", press(false));
+  }
+})();
+</script>
+
+</body>
+</html>
