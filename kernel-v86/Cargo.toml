@@ -1,0 +1,18 @@
+[package]
+name = "kernel-v86"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "32-bit multiboot build of Rust Runner OS, for the v86 browser emulator"
+
+[[bin]]
+name = "kernel-v86"
+test = false
+bench = false
+
+[features]
+autoplay = ["pc/autoplay"]
+
+[dependencies]
+runner-core = { path = "../runner-core" }
+pc = { path = "../pc" }

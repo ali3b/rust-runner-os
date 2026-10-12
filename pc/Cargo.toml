@@ -1,0 +1,13 @@
+[package]
+name = "pc"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "PC hardware drivers and the game loop shared by the bootable builds"
+
+[features]
+# Demo build for recordings: a bot plays; start/retry/title come from the keyboard.
+autoplay = []
+
+[dependencies]
+runner-core = { path = "../runner-core" }

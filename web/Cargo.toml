@@ -1,0 +1,12 @@
+[package]
+name = "web"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+runner-core = { path = "../runner-core" }

@@ -1,0 +1,317 @@
+<title>Rust Runner</title>
+<style>
+  /* Layout: the game fills the window, letterboxed to 4:3 on black. On touch
+     devices the controls float over the corners in landscape and sit under the
+     screen in portrait. Single dark look on purpose: it is a game screen. */
+  :root {
+    --void: #05030c;          /* letterbox */
+    --pad: rgba(27, 18, 54, 0.62);
+    --pad-edge: rgba(255, 79, 216, 0.55);
+    --pad-hot: rgba(255, 79, 216, 0.85);
+    --ink: #efe9ff;
+    --ink-dim: #a99bd6;
+    --cyan: #46f0ff;
+    --label: "Courier New", ui-monospace, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  /* Overlays below set `display`, so `hidden` needs to win explicitly. */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--ink);
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .stage {
+    position: fixed;
+    inset: 0;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    display: grid;
+    place-items: center;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .screen {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    width: min(100vw, 133.333dvh);
+    max-width: 100%;
+    background: #000;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    cursor: pointer;
+  }
+  .scanlines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.28) 2px 3px);
+    box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55);
+  }
+  .corner {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: calc(env(safe-area-inset-right, 0px) + 10px);
+    display: flex;
+    gap: 8px;
+    z-index: 2;
+  }
+  .corner button {
+    font: 700 12px/1 var(--label);
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    background: var(--pad);
+    border: 1px solid rgba(169, 155, 214, 0.35);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    opacity: 0.55;
+  }
+  .corner button:hover, .corner button:focus-visible { opacity: 1; color: var(--ink); }
+  .corner button:focus-visible { outline: 2px solid var(--cyan); }
+  .error {
+    position: absolute;
+    inset: auto 0 12% 0;
+    text-align: center;
+    font: 14px/1.4 var(--label);
+    color: #ffcf33;
+    padding-inline: 16px;
+  }
+
+  /* Touch controls. */
+  .pad { display: none; }
+  .touch .pad { display: block; }
+  .pad button {
+    position: absolute;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--pad);
+    border: 2px solid var(--pad-edge);
+    color: var(--ink);
+    font: 700 clamp(12px, 3.2vmin, 18px)/1 var(--label);
+    letter-spacing: 0.06em;
+    touch-action: none;
+  }
+  .pad button.held { background: var(--pad-hot); border-color: #fff; }
+  .pad .menu { border-radius: 10px; font-size: 12px; opacity: 0.8; }
+  /* Landscape: thumbs on the lower corners, over the game. */
+  @media (orientation: landscape) {
+    .touch .pad .slide { width: 21vmin; height: 21vmin; left: calc(env(safe-area-inset-left, 0px) + 3vmin); bottom: calc(env(safe-area-inset-bottom, 0px) + 6vmin); }
+    .touch .pad .kick { width: 17vmin; height: 17vmin; right: calc(env(safe-area-inset-right, 0px) + 28vmin); bottom: calc(env(safe-area-inset-bottom, 0px) + 4vmin); }
+    .touch .pad .jump { width: 25vmin; height: 25vmin; right: calc(env(safe-area-inset-right, 0px) + 3vmin); bottom: calc(env(safe-area-inset-bottom, 0px) + 9vmin); }
+    .touch .pad .menu { width: auto; height: auto; padding: 8px 12px; left: calc(env(safe-area-inset-left, 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 10px); }
+  }
+  /* Portrait: the screen on top, a control deck below. */
+  @media (orientation: portrait) {
+    .touch .stage { place-items: start center; grid-template-rows: auto 1fr; }
+    .touch .screen { width: 100vw; }
+    .touch .pad .slide { width: 30vw; height: 30vw; left: 6vw; bottom: calc(env(safe-area-inset-bottom, 0px) + 10vh); }
+    .touch .pad .kick { width: 24vw; height: 24vw; right: 38vw; bottom: calc(env(safe-area-inset-bottom, 0px) + 6vh); }
+    .touch .pad .jump { width: 34vw; height: 34vw; right: 4vw; bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh); }
+    .touch .pad .menu { width: auto; height: auto; padding: 8px 12px; left: 6vw; bottom: calc(env(safe-area-inset-bottom, 0px) + 3vh); }
+  }
+</style>
+
+<main class="stage" id="stage">
+  <div class="screen" id="screen">
+    <canvas id="game" width="640" height="480" aria-label="Rust Runner. Space or click to jump, Down to slide, Right to kick."></canvas>
+    <div class="scanlines" id="scanlines"></div>
+    <p class="error" id="error" hidden></p>
+  </div>
+  <div class="corner">
+    <button type="button" id="fullscreen" title="Fullscreen (F)">FULLSCREEN</button>
+  </div>
+  <div class="pad" aria-label="Touch controls">
+    <button type="button" class="menu" data-key="2">MENU</button>
+    <button type="button" class="slide" data-key="3">SLIDE</button>
+    <button type="button" class="kick" data-key="4">KICK</button>
+    <button type="button" class="jump" data-key="0">JUMP</button>
+  </div>
+</main>
+
+<!-- runner-wasm: `cargo xtask web` inlines the game here as base64 -->
+<script>
+(() => {
+  const KEYS = {
+    Space: 0, ArrowUp: 0, KeyW: 0,
+    KeyR: 1,
+    Escape: 2,
+    ArrowDown: 3, KeyS: 3,
+    ArrowRight: 4, KeyD: 4, KeyK: 4,
+    KeyC: 5,
+  };
+  const root = document.documentElement;
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const scanlines = document.getElementById("scanlines");
+  const fsButton = document.getElementById("fullscreen");
+  let wasm = null;
+  let image = null;
+  let audio = null;
+  let touchMode = false;
+
+  // Touch devices get on-screen controls; a hybrid laptop switches on its first touch.
+  function setTouch(on) {
+    touchMode = on;
+    root.classList.toggle("touch", on);
+    wasm?.set_touch(on ? 1 : 0);
+  }
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches;
+  const noHover = !window.matchMedia?.("(hover: hover)").matches;
+  setTouch(Boolean(coarse || (navigator.maxTouchPoints > 0 && noHover)));
+
+  async function load() {
+    let bytes;
+    if (window.RUNNER_WASM) {
+      // Single-file build: the module is embedded in the page.
+      const bin = atob(window.RUNNER_WASM);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      const res = await fetch("runner.wasm");
+      if (!res.ok) throw new Error("could not download runner.wasm (" + res.status + ")");
+      bytes = await res.arrayBuffer();
+    }
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    wasm = instance.exports;
+    wasm.init(Date.now());
+    wasm.set_touch(touchMode ? 1 : 0);
+    canvas.width = wasm.width();
+    canvas.height = wasm.height();
+    image = ctx.createImageData(canvas.width, canvas.height);
+    requestAnimationFrame(tick);
+  }
+
+  function tick(now) {
+    if (wasm.frame(now) > 0) {
+      const len = canvas.width * canvas.height * 4;
+      image.data.set(new Uint8Array(wasm.memory.buffer, wasm.pixels_ptr(), len));
+      ctx.putImageData(image, 0, 0);
+      scanlines.hidden = !wasm.crt();
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // Browsers only allow sound after a user gesture: the first key, click or tap
+  // starts it (and still counts as game input).
+  function startAudio() {
+    if (audio || !wasm) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    try {
+      audio = new Ctx({ sampleRate: wasm.sample_rate() });
+    } catch (e) {
+      audio = new Ctx();
+    }
+    const node = audio.createScriptProcessor(1024, 0, 2);
+    node.onaudioprocess = (e) => {
+      const left = e.outputBuffer.getChannelData(0);
+      const right = e.outputBuffer.getChannelData(1);
+      const frames = left.length;
+      const pcm = new Int16Array(wasm.memory.buffer, wasm.audio_render(frames), frames * 2);
+      for (let i = 0; i < frames; i++) {
+        left[i] = pcm[2 * i] / 32768;
+        right[i] = pcm[2 * i + 1] / 32768;
+      }
+    };
+    node.connect(audio.destination);
+    audio.resume?.();
+  }
+
+  const canFullscreen = Boolean(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  fsButton.hidden = !canFullscreen;
+  function toggleFullscreen() {
+    if (!canFullscreen) return;
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      return;
+    }
+    const req = root.requestFullscreen || root.webkitRequestFullscreen;
+    Promise.resolve(req.call(root, { navigationUI: "hide" }))
+      .then(() => screen.orientation?.lock?.("landscape").catch(() => {}))
+      .catch(() => {});
+  }
+  fsButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFullscreen();
+  });
+
+  let firstTouch = true;
+  function firstGesture(isTouch) {
+    startAudio();
+    if (isTouch && firstTouch) {
+      firstTouch = false;
+      if (!touchMode) setTouch(true);
+      // On phones, go fullscreen on the first tap (ignored where unsupported).
+      if (canFullscreen && !document.fullscreenElement) toggleFullscreen();
+    }
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "KeyF" && !e.repeat) {
+      toggleFullscreen();
+      return;
+    }
+    const id = KEYS[e.code];
+    if (id === undefined || !wasm) return;
+    e.preventDefault();
+    startAudio();
+    if (touchMode) setTouch(false);
+    if (!e.repeat) wasm.key(id, 1);
+  });
+  window.addEventListener("keyup", (e) => {
+    const id = KEYS[e.code];
+    if (id === undefined || !wasm) return;
+    e.preventDefault();
+    wasm.key(id, 0);
+  });
+
+  // Clicking or tapping the game screen is a jump (which also starts and retries).
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!wasm) return;
+    e.preventDefault();
+    firstGesture(e.pointerType === "touch");
+    wasm.key(0, 1);
+  });
+  const canvasUp = () => wasm?.key(0, 0);
+  canvas.addEventListener("pointerup", canvasUp);
+  canvas.addEventListener("pointercancel", canvasUp);
+
+  for (const btn of document.querySelectorAll(".pad button")) {
+    const id = Number(btn.dataset.key);
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (!wasm) return;
+      firstGesture(true);
+      btn.setPointerCapture?.(e.pointerId);
+      btn.classList.add("held");
+      wasm.key(id, 1);
+    });
+    const up = (e) => {
+      e.preventDefault();
+      btn.classList.remove("held");
+      wasm?.key(id, 0);
+    };
+    btn.addEventListener("pointerup", up);
+    btn.addEventListener("pointercancel", up);
+  }
+  // No long-press menus or double-tap zoom on the controls.
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  load().catch((err) => {
+    const el = document.getElementById("error");
+    el.textContent = "The game failed to load: " + err.message;
+    el.hidden = false;
+  });
+})();
+</script>

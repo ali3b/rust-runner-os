@@ -1,0 +1,19 @@
+[package]
+name = "kernel"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kernel"
+test = false
+bench = false
+
+[dependencies]
+bootloader_api = "=0.11.17"
+runner-core = { path = "../runner-core" }
+pc = { path = "../pc" }
+
+[features]
+# Demo build for recordings: a bot presses jump; start/restart still come from the keyboard.
+autoplay = ["pc/autoplay"]
